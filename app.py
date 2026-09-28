@@ -1,122 +1,81 @@
-importar streamlit como st
+import streamlit as st
 import pandas as pd
-importar data e hora
+from datetime import datetime
+import os
 
-# Configuração da página
-st.set_page_config(page_title="EcoDrive - Consumo", page_icon="â›½", layout="wide")
+# Configuração básica do app
+st.set_page_config(page_title="Controle de Combustivel", layout="wide")
+st.title("⛽ Acompanhamento de Combustível")
 
-# Título do aplicativo
-st.title("â›½ EcoDrive - Acompanhamento de Consumo")
-st.markdown("Gerencie seus abastecimentos, controle custos e veja relacionamentos detalhados de quilometragem.")
+# Arquivo para salvar os dados
+DATA_FILE = "dados_combustivel.csv"
 
-# Inicializar dados de estado da sessão
-se "abastecimentos" não estiver em st.session_state:
-    st.session_state.abastecimentos = pd.DataFrame(
-        colunas=["Dados", "Combustível", "Odômetro (km)", "Litros (L)", "Custo Total (R$)", "KM Rodados", "Consumo (km/L)"]
-    )
+def carregar_dados():
+    if os.path.exists(DATA_FILE):
+        df = pd.read_csv(DATA_FILE)
+        df['Data'] = pd.to_datetime(df['Data'])
+        return df.sort_values(by='Data').reset_index(drop=True)
+    return pd.DataFrame(columns=["Data", "Combustivel", "Odometro", "Litros", "Preco_Litro", "Custo_Total", "KM_Rodado", "Consumo_KML"])
 
-# Barra lateral - Formulário de inscrição
-st.sidebar.header("ðŸ“ Novo Registro")
-com st.sidebar.form("form_abastecimento", clear_on_submit=True):
-    data = st.date_input("Dados do Abastecimento", datetime.date.today())
-    combustivel = st.selectbox("Tipo de Combustível", ["Gasolina", "Etanol", "Diesel"])
-    odometro = st.number_input("Odômetro Atual (km)", min_value=0, step=1, help="Quilometragem atual no painel")
-    litros = st.number_input("Quantidade de Litros (L)", min_value=0,0, step=0,1, format="%.2f")
-    custo = st.number_input("Custo Total (R$)", min_value=0.0, step=0.1, format="%.2f")
+def salvar_dados(df):
+    df.to_csv(DATA_FILE, index=False)
+
+df = carregar_dados()
+
+# Menu lateral para entrada de dados
+st.sidebar.header("📝 Novo Abastecimento")
+data = st.sidebar.date_input("Data", datetime.now())
+combustivel = st.sidebar.selectbox("Combustível", ["Gasolina", "Etanol", "Diesel"])
+odometro = st.sidebar.number_input("Odômetro Atual (KM)", min_value=0, step=1)
+litros = st.sidebar.number_input("Litros", min_value=0.0, step=0.1)
+custo = st.sidebar.number_input("Custo Total (R$)", min_value=0.0, step=0.1)
+
+if st.sidebar.button("Salvar Registro"):
+    preco_litro = custo / litros if litros > 0 else 0
+    km_rodado = 0
+    consumo = 0
     
-    submetido = st.form_submit_form("Registrar")
+    if not df.empty:
+        ultimo_odometro = df['Odometro'].max()
+        if odometro > ultimo_odometro:
+            km_rodado = odometro - ultimo_odometro
+            consumo = km_rodado / litros if litros > 0 else 0
+            
+    novo_registro = pd.DataFrame([{
+        "Data": str(data), "Combustivel": combustivel, "Odometro": odometro,
+        "Litros": litros, "Preco_Litro": round(preco_litro, 2), "Custo_Total": custo,
+        "KM_Rodado": km_rodado, "Consumo_KML": round(consumo, 2)
+    }])
+    
+    df = pd.concat([df, novo_registro], ignore_index=True)
+    salvar_dados(df)
+    st.sidebar.success("Abastecimento salvo com sucesso!")
+    st.rerun()
 
-se submetido:
-    se odometro <= 0 ou litros <= 0 ou custo <= 0:
-        st.sidebar.error("Por favor, insira valores maiores que zero.")
-    outro:
-        # Calcular valores derivados se houver registros anteriores
-        km_rodados = 0,0
-        consumo = 0,0
-        
-        se não st.session_state.abastecimentos.empty:
-            # Ordene por data e odômetro para encontrar os anteriores
-            df_temp = st.session_state.abastecimentos.sort_values(by=["Odômetro (km)"])
-            # Obtenha o último odômetro com quilometragem menor que a atual.
-            prev_records = df_temp[df_temp["Odômetro (km)"] < odômetro]
-            se prev_records não estiver vazio:
-                ultimo_odometro = prev_records["Odômetro (km)"].iloc[-1]
-                km_rodados = odometro - ultimo_odometro
-                se litros > 0:
-                    consumo = km_rodados / litros
+# Abas do Aplicativo
+aba1, aba2 = st.tabs(["📊 Relatórios e Gráficos", "📅 Histórico (Calendário)"])
 
-        # Adicionar nova entrada
-        novo_registro = pd.DataFrame([{
-            "Dados": dados,
-            "CombustÃvel": combustivel,
-            "Odômetro (km)": odômetro,
-            "Litros (L)": litros,
-            "Custo Total (R$)": custo,
-            "KM Rodados": km_rodados,
-            "Consumo (km/L)": consumo
-        }])
+with aba1:
+    if not df.empty:
+        st.subheader("📈 Resumo Geral")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Gasto", f"R$ {df['Custo_Total'].sum():,.2f}")
+        col2.metric("Total Litros", f"{df['Litros'].sum():,.1f} L")
+        col3.metric("KM Total Rodado", f"{df['KM_Rodado'].sum()} km")
         
-        st.session_state.abastecimentos = pd.concat([st.session_state.abastecimentos, novo_registro], ignore_index=True)
-        st.sidebar.success("Abastecimento registrado com sucesso!")
+        st.subheader("Média de Consumo")
+        df_valid = df[df['Consumo_KML'] > 0]
+        if not df_valid.empty:
+            medias = df_valid.groupby('Combustivel')['Consumo_KML'].mean()
+            st.bar_chart(medias)
+        else:
+            st.info("Insira o próximo abastecimento para calcular a média de km/L.")
+    else:
+        st.info("Nenhum dado cadastrado. Use o menu lateral.")
 
-# Abas do painel principal
-tab_dash, tab_hist = st.tabs(["ðŸ“Š Relatórios e Desempenho", "ðŸ“… Histórico & Calendário"])
-
-com tab_dash:
-    se st.session_state.abastecimentos.empty:
-        st.info("Nenhum dado registrado ainda. Use o painel lateral para cadastrar o primeiro abastecimento.")
-    outro:
-        df = st.session_state.abastecimentos.copy()
-        df["Data"] = pd.to_datetime(df["Data"])
-        
-        # Linha de métricas
-        col1, col2, col3, col4 = st.columns(4)
-        com col1:
-            st.metric("Total Investido", f"R$ {df['Custo Total (R$)'].sum():,.2f}")
-        com col2:
-            st.metric("Litros Consumidos", f"{df['Litros (L)'].sum():,.1f} L")
-        com col3:
-            total_km = df["KM Rodados"].sum()
-            st.metric("Total Rodado", f"{total_km:,.1f} km")
-        com col4:
-            media_geral = df[df["Consumo (km/L)"] > 0]["Consumo (km/L)"].mean()
-            st.metric("Consumo Médio Geral", f"{media_geral:.2f} km/L" if not pd.isna(media_geral) else "---")
-
-        st.markdown("---")
-        
-        # Seção de gráficos
-        st.subheader("Desempenho por Combustível")
-        c1, c2 = st.columns(2)
-        
-        com c1:
-            # Consumo médio por tipo de combustível
-            avg_fuel = df[df["Consumo (km/L)"] > 0].groupby("Combustível")["Consumo (km/L)"].mean()
-            se não avg_fuel.empty:
-                st.markdown("**Eficiência Média (km/L)**")
-                st.bar_chart(avg_fuel)
-            outro:
-                st.write("Dados insuficientes para calcular mídias por combustível.")
-                
-        com c2:
-            # Despesas por tipo de combustível
-            cost_fuel = df.groupby("Combustível")["Custo Total (R$)"].sum()
-            st.markdown("**Gastos Totais por Combustível (R$)**")
-            st.bar_chart(custo_combustível)
-
-com tab_hist:
-    se st.session_state.abastecimentos.empty:
-        st.info("Nenhum histórico disponível.")
-    outro:
-        st.subheader("Todos os Registros")
-        # Exibir dataframe editável ou dataframe normal ordenado por data
-        df_display = st.session_state.abastecimentos.sort_values(by="Data", ascending=False)
-        st.dataframe(df_display, use_container_width=True)
-        
-        # Botão Baixar Dados
-        dados_csv = df_display.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="ðŸ“¥ Exportar dados para Excel/CSV",
-            dados=dados_csv,
-            file_name="histórico_abastecimento.csv",
-            mime="texto/csv"
-)
+with aba2:
+    st.subheader("📅 Histórico de Abastecimentos")
+    if not df.empty:
+        st.dataframe(df[["Data", "Combustivel", "Odometro", "Litros", "Custo_Total", "KM_Rodado", "Consumo_KML"]], use_container_width=True)
+    else:
+        st.text("Nenhum registro encontrado.")
