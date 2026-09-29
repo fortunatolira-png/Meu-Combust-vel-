@@ -15,7 +15,7 @@ def carregar_dados():
         df = pd.read_csv(DATA_FILE)
         df['Data'] = pd.to_datetime(df['Data'])
         return df.sort_values(by='Data').reset_index(drop=True)
-    return pd.DataFrame(columns=["Data", "Combustivel", "Odometro", "Litros", "Preco_Litro", "Custo_Total", "KM_Rodado", "Consumo_KML"])
+    return pd.DataFrame(columns=["Data", "Combustivel", "Odometro", "Litros", "Preco_Litro", "Custo_Total", "Tanque_Cheio", "KM_Rodado", "Consumo_KML"])
 
 def salvar_dados(df):
     df.to_csv(DATA_FILE, index=False)
@@ -30,27 +30,42 @@ odometro = st.sidebar.number_input("Odômetro Atual (KM)", min_value=0, step=1)
 preco_litro = st.sidebar.number_input("Preço por Litro (R$)", min_value=0.0, step=0.01, format="%.2f")
 custo = st.sidebar.number_input("Valor Total Pago (R$)", min_value=0.0, step=1.0, format="%.2f")
 
-# Cálculo automático de litros na tela para visualização antes de salvar
+# MARCADOR DE TANQUE CHEIO
+tanque_cheio = st.sidebar.checkbox("Completou o Tanque? (Tanque Cheio)", value=True)
+
+# Cálculo automático de litros na tela
 litros_calculados = custo / preco_litro if preco_litro > 0 else 0.0
 st.sidebar.info(f"⛽ Litros calculados: {litros_calculados:.2f} L")
 
 if st.sidebar.button("Salvar Registro"):
     if preco_litro <= 0 or custo <= 0 or odometro <= 0:
-        st.sidebar.error("Por favor, preencha todos os campos com valores maiores que zero!")
+        st.sidebar.error("Por favor, preencha todos os campos corretamente!")
     else:
         km_rodado = 0
         consumo = 0
         
         if not df.empty:
-            ultimo_odometro = df['Odometro'].max()
-            if odometro > ultimo_odometro:
-                km_rodado = odometro - ultimo_odometro
-                consumo = km_rodado / litros_calculados if litros_calculados > 0 else 0
+            # Buscar o último abastecimento onde o tanque TAMBÉM foi cheio
+            df_tanque_cheio = df[df['Tanque_Cheio'] == True]
+            
+            if not df_tanque_cheio.empty and tanque_cheio:
+                ultimo_registro_cheio = df_tanque_cheio.iloc[-1]
+                ultimo_odometro = ultimo_registro_cheio['Odometro']
+                
+                if odometro > ultimo_odometro:
+                    km_rodado = odometro - ultimo_odometro
+                    # Consumo baseado nos litros necessários para voltar a encher o tanque
+                    consumo = km_rodado / litros_calculados if litros_calculados > 0 else 0
+            else:
+                # Se o anterior ou o atual não for cheio, calcula apenas os KM rodados gerais
+                ultimo_odometro = df['Odometro'].max()
+                if odometro > ultimo_odometro:
+                    km_rodado = odometro - ultimo_odometro
                 
         novo_registro = pd.DataFrame([{
             "Data": str(data), "Combustivel": combustivel, "Odometro": odometro,
             "Litros": round(litros_calculados, 2), "Preco_Litro": round(preco_litro, 2), "Custo_Total": custo,
-            "KM_Rodado": km_rodado, "Consumo_KML": round(consumo, 2)
+            "Tanque_Cheio": tanque_cheio, "KM_Rodado": km_rodado, "Consumo_KML": round(consumo, 2)
         }])
         
         df = pd.concat([df, novo_registro], ignore_index=True)
@@ -69,23 +84,23 @@ with aba1:
         col2.metric("Total Litros", f"{df['Litros'].sum():,.1f} L")
         col3.metric("KM Total Rodado", f"{df['KM_Rodado'].sum()} km")
         
-        st.subheader("Média de Consumo")
+        st.subheader("Média de Consumo (Apenas Tanque Cheio)")
         df_valid = df[df['Consumo_KML'] > 0]
         if not df_valid.empty:
             medias = df_valid.groupby('Combustivel')['Consumo_KML'].mean()
             st.bar_chart(medias)
         else:
-            st.info("Insira o próximo abastecimento para calcular a média de km/L.")
+            st.info("A média de consumo aparecerá assim que você registrar o SEGUNDO abastecimento de tanque cheio consecutivamente.")
     else:
         st.info("Nenhum dado cadastrado. Use o menu lateral.")
 
 with aba2:
     st.subheader("📅 Histórico de Abastecimentos")
     if not df.empty:
-        # Formatar a data para exibição limpa
         df_exibicao = df.copy()
         df_exibicao['Data'] = df_exibicao['Data'].dt.strftime('%Y-%m-%d')
-        st.dataframe(df_exibicao[["Data", "Combustivel", "Odometro", "Preco_Litro", "Custo_Total", "Litros", "KM_Rodado", "Consumo_KML"]], use_container_width=True)
+        df_exibicao['Tanque_Cheio'] = df_exibicao['Tanque_Cheio'].map({True: "Sim", False: "Não"})
+        st.dataframe(df_exibicao[["Data", "Combustivel", "Odometro", "Preco_Litro", "Custo_Total", "Litros", "Tanque_Cheio", "KM_Rodado", "Consumo_KML"]], use_container_width=True)
     else:
         st.text("Nenhum registro encontrado.")
 
@@ -96,7 +111,6 @@ with aba3:
         df_exibicao_del = df.copy()
         df_exibicao_del['Data'] = df_exibicao_del['Data'].dt.strftime('%Y-%m-%d')
         
-        # Criar uma descrição amigável para cada linha
         opcoes = [f"ID {idx} | {row['Data']} - {row['Combustivel']} (R$ {row['Custo_Total']:.2f})" for idx, row in df_exibicao_del.iterrows()]
         registro_para_deletar = st.selectbox("Escolha o abastecimento:", opciones)
         
