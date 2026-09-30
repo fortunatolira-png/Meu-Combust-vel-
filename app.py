@@ -7,21 +7,37 @@ import os
 st.set_page_config(page_title="Controle de Combustivel", layout="wide")
 st.title("⛽ Acompanhamento de Combustível")
 
-# Arquivos para salvar os dados
+# Arquivos para salvar os dados permanentemente
 DATA_FILE = "dados_combustivel.csv"
 VEICULOS_FILE = "dados_veiculos.csv"
 
 def carregar_dados():
+    colunas_padrao = ["Data", "Carro", "Combustivel", "Odometro", "Litros", "Preco_Litro", "Custo_Total", "Tanque_Cheio", "KM_Rodado", "Consumo_KML"]
     if os.path.exists(DATA_FILE):
-        df = pd.read_csv(DATA_FILE)
-        df['Data'] = pd.to_datetime(df['Data'])
-        return df.sort_values(by='Data').reset_index(drop=True)
-    return pd.DataFrame(columns=["Data", "Carro", "Combustivel", "Odometro", "Litros", "Preco_Litro", "Custo_Total", "Tanque_Cheio", "KM_Rodado", "Consumo_KML"])
+        try:
+            df = pd.read_csv(DATA_FILE)
+            if 'Carro' not in df.columns:
+                df['Carro'] = "Carro 1"
+            for col in colunas_padrao:
+                if col not in df.columns:
+                    df[col] = 0
+            df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+            df = df.dropna(subset=['Data'])
+            return df.sort_values(by='Data').reset_index(drop=True)
+        except Exception:
+            return pd.DataFrame(columns=colunas_padrao)
+    return pd.DataFrame(columns=colunas_padrao)
 
 def carregar_veiculos():
+    # Inicializa ou carrega os veículos salvos permanentemente
     if os.path.exists(VEICULOS_FILE):
-        return pd.read_csv(VEICULOS_FILE)['Nome'].tolist()
-    return ["Meu Carro Padrão"]
+        try:
+            lista = pd.read_csv(VEICULOS_FILE)['Nome'].astype(str).tolist()
+            if lista:
+                return lista
+        except Exception:
+            pass
+    return ["Carro 1", "Carro 2"]
 
 def salvar_dados(df):
     df.to_csv(DATA_FILE, index=False)
@@ -29,12 +45,15 @@ def salvar_dados(df):
 def salvar_veiculos(lista_veiculos):
     pd.DataFrame({"Nome": lista_veiculos}).to_csv(VEICULOS_FILE, index=False)
 
+# Carrega os dados reais de forma persistente
+if 'lista_veiculos' not in st.session_state:
+    st.session_state.lista_veiculos = carregar_veiculos()
+
 df = carregar_dados()
-lista_veiculos = carregar_veiculos()
 
 # Menu lateral para entrada de dados
 st.sidebar.header("📝 Novo Abastecimento")
-carro_selecionado = st.sidebar.selectbox("Selecione o Veículo", lista_veiculos)
+carro_selecionado = st.sidebar.selectbox("Selecione o Veículo", st.session_state.lista_veiculos)
 data = st.sidebar.date_input("Data", datetime.now())
 combustivel = st.sidebar.selectbox("Combustível", ["Gasolina", "Etanol", "Diesel"])
 odometro = st.sidebar.number_input("Odômetro Atual (KM)", min_value=0, step=1)
@@ -56,7 +75,6 @@ if st.sidebar.button("Salvar Registro"):
         consumo = 0
         
         if not df.empty:
-            # Filtrar histórico específico APENAS do carro selecionado
             df_carro = df[df['Carro'] == carro_selecionado]
             df_tanque_cheio = df_carro[df_carro['Tanque_Cheio'] == True]
             
@@ -88,9 +106,7 @@ aba1, aba2, aba3, aba4 = st.tabs(["📊 Relatórios e Gráficos", "📅 Históri
 
 with aba1:
     st.subheader("🔍 Filtrar Painel")
-    carro_filtro = st.selectbox("Escolha o carro para ver o relatório:", lista_veiculos, key="filtro_painel")
-    
-    # Filtrar dados para exibição do gráfico/métricas do carro escolhido
+    carro_filtro = st.selectbox("Escolha o carro para ver o relatório:", st.session_state.lista_veiculos, key="filtro_painel")
     df_filtrado = df[df['Carro'] == carro_filtro] if not df.empty else pd.DataFrame()
     
     if not df_filtrado.empty:
@@ -112,12 +128,12 @@ with aba1:
 
 with aba2:
     st.subheader("📅 Histórico de Abastecimentos")
-    carro_hist_filtro = st.selectbox("Filtrar histórico por veículo:", ["Todos"] + lista_veiculos)
+    carro_hist_filtro = st.selectbox("Filtrar histórico por veículo:", ["Todos"] + st.session_state.lista_veiculos)
     
     if not df.empty:
         df_exibicao = df.copy()
         df_exibicao['Data'] = df_exibicao['Data'].dt.strftime('%Y-%m-%d')
-        df_exibicao['Tanque_Cheio'] = df_exibicao['Tanque_Cheio'].map({True: "Sim", False: "Não"})
+        df_exibicao['Tanque_Cheio'] = df_exibicao['Tanque_Cheio'].apply(lambda x: "Sim" if x in [True, "True", 1, "Sim"] else "Não")
         
         if carro_hist_filtro != "Todos":
             df_exibicao = df_exibicao[df_exibicao['Carro'] == carro_hist_filtro]
@@ -147,22 +163,19 @@ with aba4:
 
 with aba3:
     st.subheader("🚗 Gerenciar Seus Veículos")
-    
-    # Formulário para adicionar novos veículos
     novo_veiculo = st.text_input("Nome do Novo Veículo (ex: Fiat Uno, Honda Civic):")
+    
     if st.button("Adicionar Veículo"):
         if novo_veiculo.strip() == "":
             st.error("Digite um nome válido para o carro!")
-        elif novo_veiculo in lista_veiculos:
+        elif novo_veiculo in st.session_state.lista_veiculos:
             st.error("Este veículo já está cadastrado!")
         else:
-            lista_veiculos.append(novo_veiculo)
-            if "Meu Carro Padrão" in lista_veiculos and len(lista_veiculos) > 1:
-                lista_veiculos.remove("Meu Carro Padrão") # Remove o padrão provisório se adicionar um real
-            salvar_veiculos(lista_veiculos)
+            st.session_state.lista_veiculos.append(novo_veiculo)
+            salvar_veiculos(st.session_state.lista_veiculos)
             st.success(f"Veículo '{novo_veiculo}' cadastrado com sucesso!")
             st.rerun()
             
     st.write("📋 **Carros cadastrados atualmente:**")
-    for v in lista_veiculos:
+    for v in st.session_state.lista_veiculos:
         st.write(f"- {v}")
